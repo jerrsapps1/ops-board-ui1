@@ -18,7 +18,8 @@ type Status = "active" | "idle" | "repair" | "hold" | "leave";
 interface Company { id:string; name:string; contactName?:string; email?:string; phone?:string; notes?:string; }
 interface Worker  { id:string; name:string; role:string; certs:string[]; companyId:string; wage?:number; phone?:string; email?:string; status?:Status; homeBase?:string; notes?:string; }
 interface Equip   { id:string; code:string; kind:string; status:"active"|"idle"|"repair"; owner?:string; serviceDue?:string; location?:string; fuel?:string; notes?:string; }
-interface Project { id:string; name:string; targetCrew:number; targetEquip:number; client?:string; address?:string; primeSupervisor?:string; status?:Status; notes?:string; }
+type ProjectStatus = "active"|"pending"|"completed"|"canceled";
+interface Project { id:string; name:string; projectNumber?:string; targetCrew:number; targetEquip:number; client?:string; address?:string; primeSupervisor?:string; status?:ProjectStatus; progress?:number; notes?:string; }
 
 interface CrewSeg { workerId:string; roleTag:RoleTag }
 interface EquipSeg { equipId:string }
@@ -53,9 +54,9 @@ const SEED_EQUIP: Equip[] = [
   { id:"e4", code:"ED800-008", kind:"Dump Buggy",  status:"repair"},
 ];
 const SEED_PROJECTS: Project[] = [
-  { id:"p1", name:"San Marcos",    targetCrew:6, targetEquip:3, status:"active" },
-  { id:"p2", name:"Fort Sam",      targetCrew:5, targetEquip:2, status:"active" },
-  { id:"p3", name:"Tower of Life", targetCrew:4, targetEquip:2, status:"active" },
+  { id:"p1", name:"San Marcos", projectNumber:"", targetCrew:6, targetEquip:3, status:"active", progress:0 },
+  { id:"p2", name:"Fort Sam", projectNumber:"", targetCrew:5, targetEquip:2, status:"active", progress:0 },
+  { id:"p3", name:"Tower of Life", projectNumber:"", targetCrew:4, targetEquip:2, status:"active", progress:0 },
 ];
 
 function tl(n:number,t:number){ if(n>=t) return{tone:"ok",label:"OK"}; if(n>=Math.max(1,t-1)) return{tone:"warn",label:"Low"}; return{tone:"bad",label:"Under"}; }
@@ -207,7 +208,7 @@ export default function Board(){
   const equipCSVRef =useRef<HTMLInputElement>(null);
 
   function exportWorkersCSV(){
-    const rows = [["id","name","role","certs","company","wage","status"],
+    const rows = [["id","name","role","skills","company","wage","status"],
       ...workers.filter(scopeWorker).map(w=>[w.id,w.name,w.role,w.certs.join("; "),companyMap[w.companyId]?.name||w.companyId,String(w.wage??0),w.status||""])];
     download("workers.csv", toCSV(rows), "text/csv;charset=utf-8");
   }
@@ -262,7 +263,8 @@ export default function Board(){
         const name = r["name"] || r["employee"] || r["full name"];
         if(!name) return;
         const role = r["role"] || "Worker";
-        const certs = (r["certs"]||"").split(/[;,]/).map(s=>s.trim()).filter(Boolean);
+        
+        const certs = (r["skills"]||r["certs"]||"").split(/[;,]/).map(s=>s.trim()).filter(Boolean);
         const companyName = r["company"] || "";
         const companyId = companyName ? ensureCompany(companyName)
           : (companyScope!=="all" ? companyScope : (nextCompanies[0]?.id || "c1"));
@@ -315,7 +317,7 @@ export default function Board(){
       showToast("Equipment saved"); logEvent({entity:"equip", entityId:profile.id, action:"save"});
     }
     if(profile.type==="project"){
-      setProjects(ps=>ps.map(p=>p.id===profile.id? {...p, ...draft, targetCrew:Number(draft.targetCrew||0), targetEquip:Number(draft.targetEquip||0)} : p));
+      setProjects(ps=>ps.map(p=>p.id===profile.id? {...p, ...draft, targetCrew:Number(draft.targetCrew||0), targetEquip:Number(draft.targetEquip||0), progress:Number(draft.progress||0)} : p));
       showToast("Project saved"); logEvent({entity:"project", entityId:profile.id, action:"save"});
     }
     closeProfile();
@@ -337,11 +339,10 @@ export default function Board(){
     if(!newWorker.companyId){ alert("Pick a company."); return; }
     const id="w"+crypto.randomUUID();
     const certs = Array.isArray(newWorker.certs) ? newWorker.certs : String(newWorker.certs||"").split(",").map(s=>s.trim()).filter(Boolean);
-    setWorkers(ws=>[...ws,{
-      id, name:newWorker.name!, role:newWorker.role||"Worker", certs,
+    setWorkers(ws=>[...ws,{ id, name:newWorker.name!, role:newWorker.role||"Worker", certs,
       companyId:newWorker.companyId!, wage:Number(newWorker.wage??0),
       status:(newWorker.status as Status)||"active", phone:newWorker.phone||"", email:newWorker.email||"", homeBase:newWorker.homeBase||"", notes:newWorker.notes||""
-    }]);
+    , emergencyContact:newWorker.emergencyContact||"" }]);
     setShowAddWorker(false); setNewWorker({ role:"Worker", certs:[], status:"active", companyId: companies[0]?.id || SEED_COMPANIES[0].id, wage: 0 });
     showToast("Worker added"); logEvent({entity:"worker", entityId:id, action:"add", details:newWorker.name});
   }
@@ -355,7 +356,7 @@ export default function Board(){
   function addProject(){
     if(!newProject.name){ alert("Project name required (or Cancel)."); return; }
     const id="p"+crypto.randomUUID();
-    setProjects(ps=>[...ps,{ id, name:newProject.name!, targetCrew:Number(newProject.targetCrew||0), targetEquip:Number(newProject.targetEquip||0), client:newProject.client||"", address:newProject.address||"", primeSupervisor:newProject.primeSupervisor||"", status:(newProject.status as Status)||"active", notes:newProject.notes||"" }]);
+    setProjects(ps=>[...ps,{ id, name:newProject.name!, projectNumber:newProject.projectNumber||"", targetCrew:Number(newProject.targetCrew||0), targetEquip:Number(newProject.targetEquip||0), client:newProject.client||"", address:newProject.address||"", primeSupervisor:newProject.primeSupervisor||"", status:(newProject.status as any)||"active", progress:Number(newProject.progress||0), notes:newProject.notes||"" }]);
     setShowAddProject(false); setNewProject({ targetCrew:4, targetEquip:2, status:"active" });
     showToast("Project added"); logEvent({entity:"project", entityId:id, action:"add", details:newProject.name});
   }
@@ -490,7 +491,7 @@ export default function Board(){
                 return (
                   <div key={p.id} className="rounded-xl border border-white/10 bg-white/5 p-4">
                     <div className="flex items-center justify-between mb-3">
-                      <div className="text-lg font-semibold">{p.name}</div>
+                      <div className="text-lg font-semibold">{p.projectNumber ? ` • ` : p.name}</div>
                       <div className="flex gap-2 text-xs">
                         <span className={`px-2 py-1 rounded border ${cl.tone==="ok"?"border-emerald-400/40 bg-emerald-400/10":cl.tone==="warn"?"border-amber-400/40 bg-amber-400/10":"border-rose-400/40 bg-rose-400/10"}`}>Crew {crew.length}/{p.targetCrew} ({cl.label})</span>
                         <span className={`px-2 py-1 rounded border ${el.tone==="ok"?"border-emerald-400/40 bg-emerald-400/10":el.tone==="warn"?"border-amber-400/40 bg-amber-400/10":"border-rose-400/40 bg-rose-400/10"}`}>Equip {eq.length}/{p.targetEquip} ({el.label})</span>
@@ -709,7 +710,7 @@ export default function Board(){
             </div>
 
             <div className="text-xs text-slate-400">
-              CSV columns (workers): <code>name, role, certs, company, wage</code> (wage optional).  
+              CSV columns (workers): <code>name, role, skills, company, wage</code> (wage optional).  
               New companies are created until the limit ({COMPANY_LIMIT}); extras fall back to your first company.
             </div>
           </div>
@@ -721,6 +722,18 @@ export default function Board(){
             <div className="grid grid-cols-2 gap-2 text-sm">
               <label className="col-span-2">Name<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
                 value={newWorker.name||""} onChange={e=>setNewWorker({...newWorker, name:e.target.value})}/></label>
+                <label>Project #<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={draft.projectNumber||""} onChange={e=>setDraft({...draft, projectNumber:e.target.value})}/></label>
+                <label>Status<select className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={draft.status||"active"} onChange={e=>setDraft({...draft, status:e.target.value})}>
+                  <option>active</option><option>pending</option><option>completed</option><option>canceled</option>
+                </select></label>
+              <label>Project #<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={newProject.projectNumber||""} onChange={e=>setNewProject({...newProject, projectNumber:e.target.value})}/></label>
+              <label>Status<select className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={(newProject.status as any)||"active"} onChange={e=>setNewProject({...newProject, status:e.target.value as any})}>
+                <option>active</option><option>pending</option><option>completed</option><option>canceled</option>
+              </select></label>
               <label>Role<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
                 value={newWorker.role||"Worker"} onChange={e=>setNewWorker({...newWorker, role:e.target.value})}/></label>
               <label>Company<select className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
@@ -729,7 +742,7 @@ export default function Board(){
               </select></label>
               <label>Wage ($/hr)<input type="number" step="0.01" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
                 value={Number(newWorker.wage??0)} onChange={e=>setNewWorker({...newWorker, wage:Number(e.target.value)})}/></label>
-              <label className="col-span-2">Certs (comma separated)<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+              <label className="col-span-2">Skills (comma separated)<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
                 value={(newWorker.certs as any)?.join?.(", ") ?? ""} onChange={e=>setNewWorker({...newWorker, certs:e.target.value.split(",").map(s=>s.trim()).filter(Boolean)})}/></label>
             </div>
           </Modal>
@@ -759,6 +772,8 @@ export default function Board(){
                 value={Number(newProject.targetCrew||0)} onChange={e=>setNewProject({...newProject, targetCrew:Number(e.target.value)})}/></label>
               <label>Equip Target<input type="number" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
                 value={Number(newProject.targetEquip||0)} onChange={e=>setNewProject({...newProject, targetEquip:Number(e.target.value)})}/></label>
+                <label className="col-span-2">Progress (0–100)<input type="number" min="0" max="100" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={Number(draft.progress||0)} onChange={e=>setDraft({...draft, progress:Number(e.target.value)})}/></label>
             </div>
           </Modal>
         )}
@@ -797,7 +812,7 @@ export default function Board(){
                 </select></label>
                 <label>Wage ($/hr)<input type="number" step="0.01" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
                   value={Number(draft.wage??0)} onChange={e=>setDraft({...draft, wage:Number(e.target.value)})}/></label>
-                <label className="col-span-2">Certs (comma separated)<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                <label className="col-span-2">Skills (comma separated)<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
                   value={(Array.isArray(draft.certs)?draft.certs.join(", "):draft.certs)||""} onChange={e=>setDraft({...draft, certs:e.target.value})}/></label>
                 <label className="col-span-2">Notes<textarea className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
                   value={draft.notes||""} onChange={e=>setDraft({...draft, notes:e.target.value})}/></label>
