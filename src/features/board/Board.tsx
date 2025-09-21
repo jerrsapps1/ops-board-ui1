@@ -1,13 +1,13 @@
 import React, { useMemo, useRef, useState } from "react";
+import Modal from "./Modal";
 
 /** ---------- Brand / White-label ---------- */
 const BRAND = {
   name: "OpsSync.AI",
   logoWordUrl: "/opsync-logo.svg", // top bar & sidebar word-mark
-  logoIconUrl: "/opsync-icon.svg", // sidebar icon
-  iconWidth: 20,
-  wordHeight: 32,        // top bar word-mark
-  sidebarWordHeight: 18, // sidebar word-mark
+  // no small icon in sidebar (we want them to match)
+  wordHeight: 32,        // top bar word-mark height
+  sidebarWordHeight: 18, // sidebar word-mark height
 };
 
 const COMPANY_LIMIT = 10; // hard cap on labor vendors
@@ -16,7 +16,7 @@ type RoleTag = "Lead" | "Assistant" | null;
 type Status = "active" | "idle" | "repair" | "hold" | "leave";
 
 interface Company { id:string; name:string; contactName?:string; email?:string; phone?:string; notes?:string; }
-interface Worker  { id:string; name:string; role:string; certs:string[]; companyId:string; phone?:string; email?:string; status?:Status; homeBase?:string; notes?:string; }
+interface Worker  { id:string; name:string; role:string; certs:string[]; companyId:string; wage?:number; phone?:string; email?:string; status?:Status; homeBase?:string; notes?:string; }
 interface Equip   { id:string; code:string; kind:string; status:"active"|"idle"|"repair"; owner?:string; serviceDue?:string; location?:string; fuel?:string; notes?:string; }
 interface Project { id:string; name:string; targetCrew:number; targetEquip:number; client?:string; address?:string; primeSupervisor?:string; status?:Status; notes?:string; }
 
@@ -40,11 +40,11 @@ const SEED_COMPANIES: Company[] = [
   { id:"c2", name:"Prime Staffing" },
 ];
 const SEED_WORKERS: Worker[] = [
-  { id:"w1", name:"Jose Garcia", role:"Operator", certs:["Skid Steer","Telehandler"], status:"active", companyId:"c1" },
-  { id:"w2", name:"Aubrey M.",  role:"Supervisor", certs:["Any"], status:"active", companyId:"c1" },
-  { id:"w3", name:"Solomon S.", role:"Laborer",   certs:[], status:"active", companyId:"c2" },
-  { id:"w4", name:"Derrick T.", role:"Laborer",   certs:[], status:"active", companyId:"c2" },
-  { id:"w5", name:"James F.",   role:"Operator",  certs:["Excavator"], status:"active", companyId:"c1" },
+  { id:"w1", name:"Jose Garcia", role:"Operator", certs:["Skid Steer","Telehandler"], status:"active", companyId:"c1", wage:28 },
+  { id:"w2", name:"Aubrey M.",  role:"Supervisor", certs:["Any"], status:"active", companyId:"c1", wage:36 },
+  { id:"w3", name:"Solomon S.", role:"Laborer",   certs:[], status:"active", companyId:"c2", wage:20 },
+  { id:"w4", name:"Derrick T.", role:"Laborer",   certs:[], status:"active", companyId:"c2", wage:20 },
+  { id:"w5", name:"James F.",   role:"Operator",  certs:["Excavator"], status:"active", companyId:"c1", wage:30 },
 ];
 const SEED_EQUIP: Equip[] = [
   { id:"e1", code:"YSK-032",   kind:"Skid Steer",  status:"active" },
@@ -118,25 +118,13 @@ export default function Board(){
   const assignedEquipIds =useMemo(()=>new Set(Object.values(equipByProject).flat().map(s=>s.equipId)),[equipByProject]);
 
   const q=globalSearch.trim().toLowerCase();
-
-  const poolWorkers=workers
-    .filter(scopeWorker)
-    .filter(w=>!assignedWorkerIds.has(w.id))
-    .filter(w=>!q || (w.name+" "+w.role+" "+w.certs.join(" ")+" "+(companyMap[w.companyId]?.name||"")).toLowerCase().includes(q));
-
-  const poolEquip=equip
-    .filter(e=>!assignedEquipIds.has(e.id))
-    .filter(e=>!q || (e.code+" "+e.kind+" "+(e.location||"")).toLowerCase().includes(q));
-
-  function projectMatches(p:Project){
-    if(!q) return true;
-    if(p.name.toLowerCase().includes(q)) return true;
-    const crew=(crewByProject[p.id]||[]);
-    const eq=(equipByProject[p.id]||[]);
-    if(crew.some(s=>scopeWorker(workerMap[s.workerId]!)&&(workerMap[s.workerId]?.name||"").toLowerCase().includes(q))) return true;
-    if(eq.some(s=>(equipMap[s.equipId]?.code||"").toLowerCase().includes(q))) return true;
-    return false;
-  }
+  const poolWorkers=workers.filter(scopeWorker).filter(w=>!assignedWorkerIds.has(w.id))
+    .filter(w=>!q||(w.name+" "+w.role+" "+w.certs.join(" ")+" "+(companyMap[w.companyId]?.name||"")).toLowerCase().includes(q));
+  const poolEquip=equip.filter(e=>!assignedEquipIds.has(e.id))
+    .filter(e=>!q||(e.code+" "+e.kind+" "+(e.location||"")).toLowerCase().includes(q));
+  function projectMatches(p:Project){ if(!q) return true; if(p.name.toLowerCase().includes(q)) return true;
+    const c=(crewByProject[p.id]||[]), e=(equipByProject[p.id]||[]); if(c.some(s=>scopeWorker(workerMap[s.workerId]!)&&(workerMap[s.workerId]?.name||"").toLowerCase().includes(q))) return true;
+    if(e.some(s=>(equipMap[s.equipId]?.code||"").toLowerCase().includes(q))) return true; return false; }
 
   /* ---------- Drag & drop ---------- */
   function onDragStart(ev:React.DragEvent,p:any){ ev.dataTransfer.setData("application/json",JSON.stringify(p)); }
@@ -147,30 +135,18 @@ export default function Board(){
     try{
       const pl=JSON.parse(ev.dataTransfer.getData("application/json"));
       if(pl.type!=="worker") return;
-      const wid=pl.id as string;
-      const w=workerMap[wid];
-      if(!w) return;
+      const wid=pl.id as string; const w=workerMap[wid]; if(!w) return;
       if(!scopeWorker(w)){ showToast("Worker not in current company scope."); return; }
 
       const prevSnapshot=crewByProject;
       setCrewByProject(prev=>{
         let fromPid:string|null=null;
-        for(const [k,list] of Object.entries(prev)){
-          if((list||[]).some(s=>s.workerId===wid)){ fromPid=k; break; }
-        }
+        for(const [k,list] of Object.entries(prev)){ if((list||[]).some(s=>s.workerId===wid)){ fromPid=k; break; } }
         if(fromPid===pid) return prev;
 
-        const next:typeof prev={};
-        for(const k of Object.keys(prev)) next[k]=[...(prev[k]||[])];
-
-        // remove from previous, preserve role tag
+        const next:typeof prev={}; for(const k of Object.keys(prev)) next[k]=[...(prev[k]||[])];
         let tag:RoleTag=null;
-        if(fromPid){
-          const old=(prev[fromPid]||[]).find(s=>s.workerId===wid);
-          tag=old?.roleTag??null;
-          next[fromPid]=next[fromPid].filter(s=>s.workerId!==wid);
-        }
-        // add to new
+        if(fromPid){ const old=(prev[fromPid]||[]).find(s=>s.workerId===wid); tag=old?.roleTag??null; next[fromPid]=next[fromPid].filter(s=>s.workerId!==wid); }
         next[pid]=[...(next[pid]||[]),{workerId:wid, roleTag:tag}];
 
         const pName=projects.find(p=>p.id===pid)?.name??pid;
@@ -186,24 +162,16 @@ export default function Board(){
     try{
       const pl=JSON.parse(ev.dataTransfer.getData("application/json"));
       if(pl.type!=="equip") return;
-      const eid=pl.id as string;
-      const e=equipMap[eid];
-      if(!e) return;
+      const eid=pl.id as string; const e=equipMap[eid]; if(!e) return;
 
       const prevSnapshot=equipByProject;
       setEquipByProject(prev=>{
         let fromPid:string|null=null;
-        for(const [k,list] of Object.entries(prev)){
-          if((list||[]).some(s=>s.equipId===eid)){ fromPid=k; break; }
-        }
+        for(const [k,list] of Object.entries(prev)){ if((list||[]).some(s=>s.equipId===eid)){ fromPid=k; break; } }
         if(fromPid===pid) return prev;
 
-        const next:typeof prev={};
-        for(const k of Object.keys(prev)) next[k]=[...(prev[k]||[])];
-
-        if(fromPid){
-          next[fromPid]=next[fromPid].filter(s=>s.equipId!==eid);
-        }
+        const next:typeof prev={}; for(const k of Object.keys(prev)) next[k]=[...(prev[k]||[])];
+        if(fromPid){ next[fromPid]=next[fromPid].filter(s=>s.equipId!==eid); }
         next[pid]=[...(next[pid]||[]),{equipId:eid}];
 
         const pName=projects.find(p=>p.id===pid)?.name??pid;
@@ -215,15 +183,13 @@ export default function Board(){
   }
 
   function removeCrewSeg(pid:string,idx:number){
-    const prev=crewByProject;
-    const seg=(prev[pid]||[])[idx];
+    const prev=crewByProject; const seg=(prev[pid]||[])[idx];
     setCrewByProject(p=>({...p,[pid]:(p[pid]||[]).filter((_,i)=>i!==idx)}));
     showToast("Removed worker",()=>setCrewByProject(prev));
     if(seg) logEvent({entity:"worker", entityId:seg.workerId, action:"unassign", details:`from ${projects.find(p=>p.id===pid)?.name||pid}`});
   }
   function removeEquipSeg(pid:string,idx:number){
-    const prev=equipByProject;
-    const seg=(prev[pid]||[])[idx];
+    const prev=equipByProject; const seg=(prev[pid]||[])[idx];
     setEquipByProject(p=>({...p,[pid]:(p[pid]||[]).filter((_,i)=>i!==idx)}));
     showToast("Removed equipment",()=>setEquipByProject(prev));
     if(seg) logEvent({entity:"equip", entityId:seg.equipId, action:"unassign", details:`from ${projects.find(p=>p.id===pid)?.name||pid}`});
@@ -241,8 +207,8 @@ export default function Board(){
   const equipCSVRef =useRef<HTMLInputElement>(null);
 
   function exportWorkersCSV(){
-    const rows = [["id","name","role","certs","company","status"],
-      ...workers.filter(scopeWorker).map(w=>[w.id,w.name,w.role,w.certs.join("; "),companyMap[w.companyId]?.name||w.companyId,w.status||""])];
+    const rows = [["id","name","role","certs","company","wage","status"],
+      ...workers.filter(scopeWorker).map(w=>[w.id,w.name,w.role,w.certs.join("; "),companyMap[w.companyId]?.name||w.companyId,String(w.wage??0),w.status||""])];
     download("workers.csv", toCSV(rows), "text/csv;charset=utf-8");
   }
   function exportEquipCSV(){
@@ -298,11 +264,10 @@ export default function Board(){
         const role = r["role"] || "Worker";
         const certs = (r["certs"]||"").split(/[;,]/).map(s=>s.trim()).filter(Boolean);
         const companyName = r["company"] || "";
-        const companyId =
-          companyName ? ensureCompany(companyName)
+        const companyId = companyName ? ensureCompany(companyName)
           : (companyScope!=="all" ? companyScope : (nextCompanies[0]?.id || "c1"));
         const id = "w"+crypto.randomUUID();
-        nextWorkers.push({ id, name, role, certs, status:"active", companyId });
+        nextWorkers.push({ id, name, role, certs, status:"active", companyId, wage: Number(r["wage"]||0) });
         logEvent({entity:"worker", entityId:id, action:"add", details:`import ${name}`});
       });
 
@@ -328,7 +293,7 @@ export default function Board(){
     });
   }
 
-  /* ---------- Add/Edit modals (Profiles) ---------- */
+  /* ---------- Add/Edit state (Profiles) ---------- */
   const [profile,setProfile]=useState<ProfileOpen>(null);
   const [draft,setDraft]=useState<any>({});
 
@@ -342,7 +307,7 @@ export default function Board(){
   function saveProfile(){
     if(!profile) return;
     if(profile.type==="worker"){
-      setWorkers(ws=>ws.map(w=>w.id===profile.id? {...w, ...draft, certs:(draft.certs||[])} : w));
+      setWorkers(ws=>ws.map(w=>w.id===profile.id? {...w, ...draft, certs:(Array.isArray(draft.certs)?draft.certs:String(draft.certs||"").split(",").map((s:string)=>s.trim()).filter(Boolean)), wage:Number(draft.wage??0)} : w));
       showToast("Worker saved"); logEvent({entity:"worker", entityId:profile.id, action:"save"});
     }
     if(profile.type==="equip"){
@@ -362,7 +327,7 @@ export default function Board(){
   const [showAddProject,setShowAddProject]=useState(false);
   const [showAddCompany,setShowAddCompany]=useState(false);
 
-  const [newWorker,setNewWorker]=useState<Partial<Worker>>({ role:"Worker", certs:[], status:"active", companyId: SEED_COMPANIES[0].id });
+  const [newWorker,setNewWorker]=useState<Partial<Worker>>({ role:"Worker", certs:[], status:"active", companyId: SEED_COMPANIES[0].id, wage: 0 });
   const [newEquip,setNewEquip]=useState<Partial<Equip>>({ status:"active" });
   const [newProject,setNewProject]=useState<Partial<Project>>({ targetCrew:4, targetEquip:2, status:"active" });
   const [newCompany,setNewCompany]=useState<Partial<Company>>({});
@@ -372,8 +337,12 @@ export default function Board(){
     if(!newWorker.companyId){ alert("Pick a company."); return; }
     const id="w"+crypto.randomUUID();
     const certs = Array.isArray(newWorker.certs) ? newWorker.certs : String(newWorker.certs||"").split(",").map(s=>s.trim()).filter(Boolean);
-    setWorkers(ws=>[...ws,{ id, name:newWorker.name!, role:newWorker.role||"Worker", certs, companyId:newWorker.companyId!, status:(newWorker.status as Status)||"active", phone:newWorker.phone||"", email:newWorker.email||"", homeBase:newWorker.homeBase||"", notes:newWorker.notes||"" }]);
-    setShowAddWorker(false); setNewWorker({ role:"Worker", certs:[], status:"active", companyId: companies[0]?.id || SEED_COMPANIES[0].id });
+    setWorkers(ws=>[...ws,{
+      id, name:newWorker.name!, role:newWorker.role||"Worker", certs,
+      companyId:newWorker.companyId!, wage:Number(newWorker.wage??0),
+      status:(newWorker.status as Status)||"active", phone:newWorker.phone||"", email:newWorker.email||"", homeBase:newWorker.homeBase||"", notes:newWorker.notes||""
+    }]);
+    setShowAddWorker(false); setNewWorker({ role:"Worker", certs:[], status:"active", companyId: companies[0]?.id || SEED_COMPANIES[0].id, wage: 0 });
     showToast("Worker added"); logEvent({entity:"worker", entityId:id, action:"add", details:newWorker.name});
   }
   function addEquip(){
@@ -410,7 +379,6 @@ export default function Board(){
       {/* Sidebar */}
       <aside className="fixed left-0 top-0 bottom-0 w-56 border-r border-white/10 bg-white/5 p-4 z-20">
         <div className="mb-4 flex items-center gap-2">
-          {BRAND.logoIconUrl && <img src={BRAND.logoIconUrl} width={BRAND.iconWidth} alt={BRAND.name} className="rounded" />}
           {BRAND.logoWordUrl && <img src={BRAND.logoWordUrl} style={{height:BRAND.sidebarWordHeight}} alt={BRAND.name} />}
         </div>
         <div className="space-y-2">
@@ -590,7 +558,7 @@ export default function Board(){
                       <div className="font-medium">{w.name} <span className="text-slate-400">• {w.role}</span></div>
                       <button onClick={()=>openProfile("worker", w.id)} className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20 border border-white/10">Edit</button>
                     </div>
-                    <div className="text-xs text-slate-400 mt-1">Company: {companyMap[w.companyId]?.name||w.companyId}</div>
+                    <div className="text-xs text-slate-400 mt-1">Company: {companyMap[w.companyId]?.name||w.companyId} • Wage: ${w.wage ?? 0}/hr</div>
                   </div>
                 ))}
               </div>
@@ -676,7 +644,7 @@ export default function Board(){
                     return (
                       <tr key={t.id} className="border-t border-white/10">
                         <td className="px-2 py-2">{t.date}</td>
-                        <td className="px-2 py-2">{w?.name||t.workerId}</td>
+                        <td className="px-2 py-2">{w?.name||t.workerId} <span className="text-xs text-slate-400">(${w?.wage??0}/hr)</span></td>
                         <td className="px-2 py-2">{companyMap[t.companyId]?.name||t.companyId}</td>
                         <td className="px-2 py-2">{p?.name||t.projectId}</td>
                         <td className="px-2 py-2">{t.hours}</td>
@@ -741,10 +709,127 @@ export default function Board(){
             </div>
 
             <div className="text-xs text-slate-400">
-              CSV columns (workers): <code>name, role, certs, company</code>.  
+              CSV columns (workers): <code>name, role, certs, company, wage</code> (wage optional).  
               New companies are created until the limit ({COMPANY_LIMIT}); extras fall back to your first company.
             </div>
           </div>
+        )}
+
+        {/* --------- ADD / EDIT MODALS (Profiles) --------- */}
+        {showAddWorker && (
+          <Modal title="Add Worker" onClose={()=>setShowAddWorker(false)} onPrimary={addWorker} primaryText="Add">
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <label className="col-span-2">Name<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={newWorker.name||""} onChange={e=>setNewWorker({...newWorker, name:e.target.value})}/></label>
+              <label>Role<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={newWorker.role||"Worker"} onChange={e=>setNewWorker({...newWorker, role:e.target.value})}/></label>
+              <label>Company<select className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={newWorker.companyId||companies[0]?.id} onChange={e=>setNewWorker({...newWorker, companyId:e.target.value})}>
+                {companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+              </select></label>
+              <label>Wage ($/hr)<input type="number" step="0.01" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={Number(newWorker.wage??0)} onChange={e=>setNewWorker({...newWorker, wage:Number(e.target.value)})}/></label>
+              <label className="col-span-2">Certs (comma separated)<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={(newWorker.certs as any)?.join?.(", ") ?? ""} onChange={e=>setNewWorker({...newWorker, certs:e.target.value.split(",").map(s=>s.trim()).filter(Boolean)})}/></label>
+            </div>
+          </Modal>
+        )}
+
+        {showAddEquip && (
+          <Modal title="Add Equipment" onClose={()=>setShowAddEquip(false)} onPrimary={addEquip} primaryText="Add">
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <label>Code<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={newEquip.code||""} onChange={e=>setNewEquip({...newEquip, code:e.target.value})}/></label>
+              <label>Type<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={newEquip.kind||""} onChange={e=>setNewEquip({...newEquip, kind:e.target.value})}/></label>
+              <label>Status<select className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={newEquip.status||"active"} onChange={e=>setNewEquip({...newEquip, status:e.target.value as any})}>
+                  <option>active</option><option>idle</option><option>repair</option>
+              </select></label>
+            </div>
+          </Modal>
+        )}
+
+        {showAddProject && (
+          <Modal title="Add Project" onClose={()=>setShowAddProject(false)} onPrimary={addProject} primaryText="Add">
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <label className="col-span-2">Name<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={newProject.name||""} onChange={e=>setNewProject({...newProject, name:e.target.value})}/></label>
+              <label>Crew Target<input type="number" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={Number(newProject.targetCrew||0)} onChange={e=>setNewProject({...newProject, targetCrew:Number(e.target.value)})}/></label>
+              <label>Equip Target<input type="number" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={Number(newProject.targetEquip||0)} onChange={e=>setNewProject({...newProject, targetEquip:Number(e.target.value)})}/></label>
+            </div>
+          </Modal>
+        )}
+
+        {showAddCompany && (
+          <Modal title="Add Company" onClose={()=>setShowAddCompany(false)} onPrimary={addCompany} primaryText="Add">
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <label className="col-span-2">Name<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={newCompany.name||""} onChange={e=>setNewCompany({...newCompany, name:e.target.value})}/></label>
+              <label>Contact<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={newCompany.contactName||""} onChange={e=>setNewCompany({...newCompany, contactName:e.target.value})}/></label>
+              <label>Phone<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={newCompany.phone||""} onChange={e=>setNewCompany({...newCompany, phone:e.target.value})}/></label>
+              <label className="col-span-2">Email<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                value={newCompany.email||""} onChange={e=>setNewCompany({...newCompany, email:e.target.value})}/></label>
+            </div>
+          </Modal>
+        )}
+
+        {profile && (
+          <Modal
+            title={`Edit ${profile.type === "worker" ? "Worker" : profile.type === "equip" ? "Equipment" : "Project"}`}
+            onClose={closeProfile}
+            onPrimary={saveProfile}
+            primaryText="Save"
+          >
+            {profile.type==="worker" && (
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <label className="col-span-2">Name<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={draft.name||""} onChange={e=>setDraft({...draft, name:e.target.value})}/></label>
+                <label>Role<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={draft.role||"Worker"} onChange={e=>setDraft({...draft, role:e.target.value})}/></label>
+                <label>Company<select className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={draft.companyId||companies[0]?.id} onChange={e=>setDraft({...draft, companyId:e.target.value})}>
+                  {companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                </select></label>
+                <label>Wage ($/hr)<input type="number" step="0.01" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={Number(draft.wage??0)} onChange={e=>setDraft({...draft, wage:Number(e.target.value)})}/></label>
+                <label className="col-span-2">Certs (comma separated)<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={(Array.isArray(draft.certs)?draft.certs.join(", "):draft.certs)||""} onChange={e=>setDraft({...draft, certs:e.target.value})}/></label>
+                <label className="col-span-2">Notes<textarea className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={draft.notes||""} onChange={e=>setDraft({...draft, notes:e.target.value})}/></label>
+              </div>
+            )}
+            {profile.type==="equip" && (
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <label>Code<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={draft.code||""} onChange={e=>setDraft({...draft, code:e.target.value})}/></label>
+                <label>Type<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={draft.kind||""} onChange={e=>setDraft({...draft, kind:e.target.value})}/></label>
+                <label>Status<select className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={draft.status||"active"} onChange={e=>setDraft({...draft, status:e.target.value})}>
+                    <option>active</option><option>idle</option><option>repair</option>
+                </select></label>
+                <label className="col-span-2">Notes<textarea className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={draft.notes||""} onChange={e=>setDraft({...draft, notes:e.target.value})}/></label>
+              </div>
+            )}
+            {profile.type==="project" && (
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <label className="col-span-2">Name<input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={draft.name||""} onChange={e=>setDraft({...draft, name:e.target.value})}/></label>
+                <label>Crew Target<input type="number" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={Number(draft.targetCrew||0)} onChange={e=>setDraft({...draft, targetCrew:Number(e.target.value)})}/></label>
+                <label>Equip Target<input type="number" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={Number(draft.targetEquip||0)} onChange={e=>setDraft({...draft, targetEquip:Number(e.target.value)})}/></label>
+                <label className="col-span-2">Notes<textarea className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                  value={draft.notes||""} onChange={e=>setDraft({...draft, notes:e.target.value})}/></label>
+              </div>
+            )}
+          </Modal>
         )}
       </div>
 
