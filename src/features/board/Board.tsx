@@ -1,14 +1,13 @@
-<PASTE THE FULL FILE CONTENT FROM HERE>
 import React, { useMemo, useRef, useState } from "react";
 
 /** ---------- Brand / White-label ---------- */
 const BRAND = {
   name: "OpsSync.AI",
-  logoWordUrl: "/opsync-logo.svg", // top bar + sidebar word-mark
+  logoWordUrl: "/opsync-logo.svg", // top bar & sidebar word-mark
   logoIconUrl: "/opsync-icon.svg", // sidebar icon
   iconWidth: 20,
-  wordHeight: 32,        // top bar word-mark height
-  sidebarWordHeight: 18, // sidebar word-mark height
+  wordHeight: 32,        // top bar word-mark
+  sidebarWordHeight: 18, // sidebar word-mark
 };
 
 const COMPANY_LIMIT = 10; // hard cap on labor vendors
@@ -430,9 +429,9 @@ export default function Board(){
 
       {/* Main */}
       <div className="ml-56 p-6">
-        {/* Top bar (word-mark as home button) */}
+        {/* Top bar (word-mark is a home button) */}
         <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <button onClick={()=>setNav("dashboard")} className="flex items-center gap-3 group">
+          <button onClick={()=>setNav("dashboard")} className="flex items-center gap-3 group" title="Home">
             {BRAND.logoWordUrl
               ? <img src={BRAND.logoWordUrl} style={{height:BRAND.wordHeight}} alt={BRAND.name} />
               : <span className="text-2xl sm:text-3xl font-bold group-hover:underline">{BRAND.name}</span>}
@@ -466,8 +465,287 @@ export default function Board(){
           </div>
         </div>
 
-        {/* ---- VIEWS (Dashboard / Profiles / Time / Logs / Import) UNCHANGED FROM YOUR CURRENT FILE ---- */}
-        {/* Keep your current sections here. */}
+        {/* ---------------- Dashboard ---------------- */}
+        {nav==="dashboard" && (
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+            {/* Unassigned Pool */}
+            <div className="xl:col-span-4">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="text-lg font-semibold mb-2">Unassigned Pool</div>
+                <div className="text-sm text-slate-400">Drag to assign. Drag between projects to move.</div>
+
+                <div className="mt-4">
+                  <div className="font-semibold mb-1">Workers</div>
+                  <div className="rounded-lg bg-slate-900/40 p-2 max-h-72 overflow-auto">
+                    {poolWorkers.length===0 && <div className="text-sm text-slate-400">No unassigned workers</div>}
+                    {poolWorkers.map(w=>(
+                      <div key={w.id}
+                        draggable
+                        onDragStart={(e)=>onDragStart(e,{type:"worker", id:w.id})}
+                        className="mb-2 last:mb-0 flex items-center justify-between rounded border border-white/10 bg-white/5 px-2 py-1 text-sm">
+                        <div className="truncate">
+                          <span className="font-medium">{w.name}</span>
+                          <span className="text-slate-400"> • {w.role}</span>
+                          <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-white/10 border border-white/10">{companyMap[w.companyId]?.name||w.companyId}</span>
+                        </div>
+                        <button onClick={()=>openProfile("worker", w.id)} className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20 border border-white/10">Profile</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <div className="font-semibold mb-1">Equipment</div>
+                  <div className="rounded-lg bg-slate-900/40 p-2 max-h-56 overflow-auto">
+                    {poolEquip.length===0 && <div className="text-sm text-slate-400">No unassigned equipment</div>}
+                    {poolEquip.map(e=>(
+                      <div key={e.id}
+                        draggable
+                        onDragStart={(ev)=>onDragStart(ev,{type:"equip", id:e.id})}
+                        className="mb-2 last:mb-0 flex items-center justify-between rounded border border-white/10 bg-white/5 px-2 py-1 text-sm">
+                        <div><span className="font-medium">{e.code}</span> <span className="text-slate-400">• {e.kind}</span></div>
+                        <button onClick={()=>openProfile("equip", e.id)} className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20 border border-white/10">Profile</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Projects */}
+            <div className="xl:col-span-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+              {projects.filter(projectMatches).map(p=>{
+                const crew=(crewByProject[p.id]||[]).filter(s=>scopeWorker(workerMap[s.workerId]!));
+                const eq  =(equipByProject[p.id]||[]);
+                const cl  = tl(crew.length, p.targetCrew);
+                const el  = tl(eq.length,   p.targetEquip);
+                return (
+                  <div key={p.id} className="rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-lg font-semibold">{p.name}</div>
+                      <div className="flex gap-2 text-xs">
+                        <span className={`px-2 py-1 rounded border ${cl.tone==="ok"?"border-emerald-400/40 bg-emerald-400/10":cl.tone==="warn"?"border-amber-400/40 bg-amber-400/10":"border-rose-400/40 bg-rose-400/10"}`}>Crew {crew.length}/{p.targetCrew} ({cl.label})</span>
+                        <span className={`px-2 py-1 rounded border ${el.tone==="ok"?"border-emerald-400/40 bg-emerald-400/10":el.tone==="warn"?"border-amber-400/40 bg-amber-400/10":"border-rose-400/40 bg-rose-400/10"}`}>Equip {eq.length}/{p.targetEquip} ({el.label})</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm font-semibold mb-1">Crew</div>
+                      <div onDragOver={allowDrop} onDrop={(e)=>dropWorker(p.id,e)} className="rounded-lg border border-dashed border-white/15 bg-white/5 p-2 min-h-[56px]">
+                        {crew.length===0 && <div className="text-sm text-slate-400">Drop workers here</div>}
+                        <div className="flex flex-wrap gap-2">
+                          {crew.map((s,idx)=>{
+                            const w=workerMap[s.workerId]; if(!w) return null;
+                            return (
+                              <div key={s.workerId} className="flex items-center gap-2 px-2 py-1 rounded-full bg-slate-900/40 border border-white/10 text-sm">
+                                <span className="font-medium truncate max-w-[140px]">{w.name}</span>
+                                <button onClick={()=>cycleTag(p.id, idx)} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/10">{s.roleTag||"Tag"}</button>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/10">{companyMap[w.companyId]?.name||w.companyId}</span>
+                                <button onClick={()=>removeCrewSeg(p.id, idx)} className="text-xs px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 border border-white/10">✕</button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="text-sm font-semibold mb-1">Equipment</div>
+                      <div onDragOver={allowDrop} onDrop={(e)=>dropEquip(p.id,e)} className="rounded-lg border border-dashed border-white/15 bg-white/5 p-2 min-h-[56px]">
+                        {eq.length===0 && <div className="text-sm text-slate-400">Drop equipment here</div>}
+                        <div className="flex flex-wrap gap-2">
+                          {eq.map((s,idx)=>{
+                            const e=equipMap[s.equipId]; if(!e) return null;
+                            return (
+                              <div key={s.equipId} className="flex items-center gap-2 px-2 py-1 rounded-full bg-slate-900/40 border border-white/10 text-sm">
+                                <span className="font-medium">{e.code}</span>
+                                <span className="text-xs text-slate-400">{e.kind}</span>
+                                <button onClick={()=>removeEquipSeg(p.id, idx)} className="text-xs px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 border border-white/10">✕</button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ---------------- Profiles ---------------- */}
+        {nav==="profiles" && (
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            {/* Workers */}
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-lg font-semibold">Workers ({workers.length})</div>
+                <button onClick={()=>setShowAddWorker(true)} className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 border border-white/20 text-sm">Add</button>
+              </div>
+              <div className="space-y-2 max-h-[65vh] overflow-auto">
+                {workers.filter(scopeWorker).map(w=>(
+                  <div key={w.id} className="rounded border border-white/10 bg-white/5 p-2">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium">{w.name} <span className="text-slate-400">• {w.role}</span></div>
+                      <button onClick={()=>openProfile("worker", w.id)} className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20 border border-white/10">Edit</button>
+                    </div>
+                    <div className="text-xs text-slate-400 mt-1">Company: {companyMap[w.companyId]?.name||w.companyId}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Equipment */}
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-lg font-semibold">Equipment ({equip.length})</div>
+                <button onClick={()=>setShowAddEquip(true)} className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 border border-white/20 text-sm">Add</button>
+              </div>
+              <div className="space-y-2 max-h-[65vh] overflow-auto">
+                {equip.map(e=>(
+                  <div key={e.id} className="rounded border border-white/10 bg-white/5 p-2">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium">{e.code} <span className="text-slate-400">• {e.kind}</span></div>
+                      <button onClick={()=>openProfile("equip", e.id)} className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20 border border-white/10">Edit</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Companies + Projects */}
+            <div className="space-y-6">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-lg font-semibold">Companies ({companies.length}/{COMPANY_LIMIT})</div>
+                  <button onClick={()=>setShowAddCompany(true)} className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 border border-white/20 text-sm">Add</button>
+                </div>
+                <div className="space-y-2 max-h-64 overflow-auto">
+                  {companies.map(c=>(
+                    <div key={c.id} className="rounded border border-white/10 bg-white/5 p-2">
+                      <div className="font-medium">{c.name}</div>
+                      <div className="text-xs text-slate-400">{[c.contactName,c.phone,c.email].filter(Boolean).join(" • ")}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-lg font-semibold">Projects ({projects.length})</div>
+                  <button onClick={()=>setShowAddProject(true)} className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 border border-white/20 text-sm">Add</button>
+                </div>
+                <div className="space-y-2 max-h-72 overflow-auto">
+                  {projects.map(p=>(
+                    <div key={p.id} className="rounded border border-white/10 bg-white/5 p-2">
+                      <div className="flex items-center justify-between">
+                        <div className="font-medium">{p.name}</div>
+                        <button onClick={()=>openProfile("project", p.id)} className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20 border border-white/10">Edit</button>
+                      </div>
+                      <div className="text-xs text-slate-400 mt-1">Targets: Crew {p.targetCrew}, Equip {p.targetEquip}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ---------------- Time & Attendance (demo) ---------------- */}
+        {nav==="time" && (
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-lg font-semibold">Time & Attendance (demo)</div>
+            </div>
+            <div className="overflow-auto">
+              <table className="min-w-full text-sm">
+                <thead className="text-left text-slate-300">
+                  <tr>
+                    <th className="px-2 py-2">Date</th>
+                    <th className="px-2 py-2">Worker</th>
+                    <th className="px-2 py-2">Company</th>
+                    <th className="px-2 py-2">Project</th>
+                    <th className="px-2 py-2">Hours</th>
+                    <th className="px-2 py-2">Approved</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {timesheets.filter(scopeTime).map(t=>{
+                    const w = workerMap[t.workerId]; const p = projects.find(x=>x.id===t.projectId);
+                    return (
+                      <tr key={t.id} className="border-t border-white/10">
+                        <td className="px-2 py-2">{t.date}</td>
+                        <td className="px-2 py-2">{w?.name||t.workerId}</td>
+                        <td className="px-2 py-2">{companyMap[t.companyId]?.name||t.companyId}</td>
+                        <td className="px-2 py-2">{p?.name||t.projectId}</td>
+                        <td className="px-2 py-2">{t.hours}</td>
+                        <td className="px-2 py-2"><input type="checkbox" checked={t.approved} onChange={e=>setTimesheets(ts=>ts.map(x=>x.id===t.id?{...x, approved:e.target.checked}:x))} /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ---------------- DB Logs ---------------- */}
+        {nav==="logs" && (
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <div className="text-lg font-semibold mb-3">DB Logs</div>
+            <div className="overflow-auto max-h-[70vh]">
+              <table className="min-w-full text-sm">
+                <thead className="text-left text-slate-300">
+                  <tr>
+                    <th className="px-2 py-2">Time</th>
+                    <th className="px-2 py-2">Actor</th>
+                    <th className="px-2 py-2">Entity</th>
+                    <th className="px-2 py-2">Action</th>
+                    <th className="px-2 py-2">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map(l=>(
+                    <tr key={l.id} className="border-t border-white/10">
+                      <td className="px-2 py-2">{new Date(l.ts).toLocaleString()}</td>
+                      <td className="px-2 py-2">{l.actor}</td>
+                      <td className="px-2 py-2">{l.entity}</td>
+                      <td className="px-2 py-2">{l.action}</td>
+                      <td className="px-2 py-2">{l.details||""}</td>
+                    </tr>
+                  ))}
+                  {logs.length===0 && <tr><td className="px-2 py-2 text-slate-400" colSpan={5}>No log entries yet.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ---------------- Import / Export ---------------- */}
+        {nav==="import" && (
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-4">
+            <div className="text-lg font-semibold">Import / Export</div>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={()=>workerCSVRef.current?.click()} className="px-3 py-2 rounded bg-white/10 hover:bg-white/20 border border-white/20 text-sm">Import Workers CSV</button>
+              <input ref={workerCSVRef} type="file" accept=".csv,text/csv" className="hidden" onChange={e=>{ const f=e.target.files?.[0]; if(f) importWorkerCSV(f); e.currentTarget.value=""; }} />
+              <button onClick={()=>equipCSVRef.current?.click()} className="px-3 py-2 rounded bg-white/10 hover:bg-white/20 border border-white/20 text-sm">Import Equipment CSV</button>
+              <input ref={equipCSVRef} type="file" accept=".csv,text/csv" className="hidden" onChange={e=>{ const f=e.target.files?.[0]; if(f) importEquipCSV(f); e.currentTarget.value=""; }} />
+
+              <div className="w-px h-8 bg-white/10 mx-1" />
+
+              <button onClick={exportWorkersCSV}     className="px-3 py-2 rounded bg-white/10 hover:bg-white/20 border border-white/20 text-sm">Export Workers</button>
+              <button onClick={exportEquipCSV}       className="px-3 py-2 rounded bg-white/10 hover:bg-white/20 border border-white/20 text-sm">Export Equipment</button>
+              <button onClick={exportProjectsCSV}    className="px-3 py-2 rounded bg-white/10 hover:bg-white/20 border border-white/20 text-sm">Export Projects</button>
+              <button onClick={exportAssignmentsCSV} className="px-3 py-2 rounded bg-white/10 hover:bg-white/20 border border-white/20 text-sm">Export Assignments</button>
+            </div>
+
+            <div className="text-xs text-slate-400">
+              CSV columns (workers): <code>name, role, certs, company</code>.  
+              New companies are created until the limit ({COMPANY_LIMIT}); extras fall back to your first company.
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Toast */}
